@@ -23,7 +23,7 @@ int maxRetries = 7;
 int retries = 0;
 
 // Function to read from the sensor (DHT11 or DHT22)
-void read_dht_dat(int DHTPIN, int sensor_type)
+void read_dht_dat(int DHTPIN, char sensor_type)
 {
     uint8_t laststate = HIGH;
     uint8_t counter = 0;
@@ -138,7 +138,7 @@ int main(int argc, char *argv[])
         else if (strcmp(argv[i], "-sensor") == 0)
         {
             sensor_type = atoi(argv[++i]);
-            if (strcmp(!sensor_type, "dht11") && strcmp(!sensor_type, "dht22"))
+            if (!strcmp(sensor_type, "dht11") && !strcmp(sensor_type, "dht22"))
             {
                 fprintf(stderr, "Invalid sensor type. Use dht11 for DHT11 or dht22 for DHT22.\n");
                 exit(1);
