@@ -5,7 +5,7 @@
 // Corrected manually to 40 bits and work fine.
 // Output is in line protocol format to use in influxdata telegraf.
 // https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/
-// Program for Raspberry Pi board. 
+// Program for Raspberry Pi board.
 // Compiling: gcc dht11+22.c -o dht11+22 -l wiringPi
 
 #include <wiringPi.h>
@@ -19,11 +19,12 @@
 
 int dht_dat[5] = {0, 0, 0, 0, 0}; // Data array to hold received values
 char hostbuffer[256];
+char sensor_type_name[8];
 int maxRetries = 7;
 int retries = 0;
 
 // Function to read from the sensor (DHT11 or DHT22)
-void read_dht_dat(int DHTPIN, char sensor_type)
+void read_dht_dat(int DHTPIN, int sensor_type)
 {
     uint8_t laststate = HIGH;
     uint8_t counter = 0;
@@ -72,12 +73,12 @@ void read_dht_dat(int DHTPIN, char sensor_type)
         // Handle DHT11 (8-bit) or DHT22 (16-bit)
         float temperature, humidity;
 
-        if strcmp(sensor_type, "dht11")
+        if (sensor_type == 11)
         { // DHT11
             humidity = dht_dat[0];
             temperature = dht_dat[2];
         }
-        else if strcmp(sensor_type, "dht22")
+        else if (sensor_type == 22)
         { // DHT22
             humidity = (dht_dat[0] << 8) + dht_dat[1];
             temperature = (dht_dat[2] << 8) + dht_dat[3];
@@ -88,12 +89,12 @@ void read_dht_dat(int DHTPIN, char sensor_type)
             humidity /= 10.0;
         }
         // Check for valid ranges
-        if ((strcmp(sensor_type, "dht11") && temperature >= 0 && temperature <= 80 && humidity >= 0 && humidity <= 100) ||
-            (strcmp(sensor_type, "dht22") && temperature >= -40 && temperature <= 80 && humidity >= 0 && humidity <= 100))
+        if ((sensor_type == 11 && temperature >= 0 && temperature <= 80 && humidity >= 0 && humidity <= 100) ||
+            (sensor_type == 22 && temperature >= -40 && temperature <= 80 && humidity >= 0 && humidity <= 100))
         {
             gethostname(hostbuffer, sizeof(hostbuffer));
-            printf("Weather,host=%s,pinnum=%d,sensor_type=%s humidity=%.1f,temperature=%.1f\n",
-                   hostbuffer, DHTPIN, sensor_type, humidity, temperature);
+            printf("Weather,host=%s,pinnum=%d,sensor_type_name=%s humidity=%.1f,temperature=%.1f\n",
+                   hostbuffer, DHTPIN, sensor_type_name, humidity, temperature);
         }
         else
         {
@@ -104,65 +105,75 @@ void read_dht_dat(int DHTPIN, char sensor_type)
                 delay(3000);
                 read_dht_dat(DHTPIN, sensor_type);
             }
-    }
-    else
-    {
-        // Retry if checksum fails or data is incorrect
-        if (retries < maxRetries)
-        {
-            retries++;
-            delay(3000);
-            read_dht_dat(DHTPIN, sensor_type); // Retry if the data is incorrect
-        }
-    }
-}
-
-int main(int argc, char *argv[])
-{
-    if (argc != 5)
-    {
-        fprintf(stderr, "Usage: %s -dhtpin <pin_number> -sensor <dht11|dht22>\n", argv[0]);
-        exit(1);
-    }
-
-    int DHTPIN = -1;
-    char sensor_type[8] = "noselect"; // Default to 0 (invalid)
-
-    // Parse the arguments
-    for (int i = 1; i < argc; i++)
-    {
-        if (strcmp(argv[i], "-dhtpin") == 0)
-        {
-            DHTPIN = atoi(argv[++i]);
-        }
-        else if (strcmp(argv[i], "-sensor") == 0)
-        {
-            sensor_type = atoi(argv[++i]);
-            if (!strcmp(sensor_type, "dht11") && !strcmp(sensor_type, "dht22"))
-            {
-                fprintf(stderr, "Invalid sensor type. Use dht11 for DHT11 or dht22 for DHT22.\n");
-                exit(1);
-            }
         }
         else
         {
-            fprintf(stderr, "Invalid argument: %s\n", argv[i]);
-            exit(1);
+            // Retry if checksum fails or data is incorrect
+            if (retries < maxRetries)
+            {
+                retries++;
+                delay(3000);
+                read_dht_dat(DHTPIN, sensor_type); // Retry if the data is incorrect
+            }
         }
     }
 
-    if (DHTPIN == -1 || sensor_type == 0)
+    int main(int argc, char *argv[])
     {
-        fprintf(stderr, "Usage: %s -dhtpin <pin_number> -sensor <dht11|dht22>\n", argv[0]);
-        exit(1);
+        if (argc != 5)
+        {
+            fprintf(stderr, "Usage: %s -dhtpin <pin_number> -sensor <dht11|dht22>\n", argv[0]);
+            exit(1);
+        }
+
+        int DHTPIN = -1;
+        int sensor_type = 0; // Default to 0 (invalid)
+
+        // Parse the arguments
+        for (int i = 1; i < argc; i++)
+        {
+            if (strcmp(argv[i], "-dhtpin") == 0)
+            {
+                DHTPIN = atoi(argv[++i]);
+            }
+            else if (strcmp(argv[i], "-sensor") == 0)
+            {
+                i++;
+                if (strcmp(argv[i], "dht11") == 0)
+                {
+                    sensor_type = 11;
+                    sensor_type_name = "dht11"
+                }
+                else if (strcmp(argv[i], "dht22") == 0)
+                {
+                    sensor_type = 22;
+                    sensor_type_name = "dht22"
+                }
+                else
+                {
+                    fprintf(stderr, "Invalid sensor type. Use dht11 or dht22.\n");
+                    exit(1);
+                }
+            }
+            else
+            {
+                fprintf(stderr, "Invalid argument: %s\n", argv[i]);
+                exit(1);
+            }
+        }
+
+        if (DHTPIN == -1 || sensor_type == 0)
+        {
+            fprintf(stderr, "Usage: %s -dhtpin <pin_number> -sensor <dht11|dht22>\n", argv[0]);
+            exit(1);
+        }
+
+        if (wiringPiSetup() == -1)
+        {
+            exit(1);
+        }
+
+        read_dht_dat(DHTPIN, sensor_type);
+
+        return 0;
     }
-
-    if (wiringPiSetup() == -1)
-    {
-        exit(1);
-    }
-
-    read_dht_dat(DHTPIN, sensor_type);
-
-    return 0;
-}
