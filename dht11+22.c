@@ -72,12 +72,12 @@ void read_dht_dat(int DHTPIN, int sensor_type)
         // Handle DHT11 (8-bit) or DHT22 (16-bit)
         float temperature, humidity;
 
-        if (sensor_type == "dht11")
+        if strcmp(sensor_type, "dht11")
         { // DHT11
             humidity = dht_dat[0];
             temperature = dht_dat[2];
         }
-        else if (sensor_type == "dht22")
+        else if strcmp(sensor_type, "dht22")
         { // DHT22
             humidity = (dht_dat[0] << 8) + dht_dat[1];
             temperature = (dht_dat[2] << 8) + dht_dat[3];
@@ -88,8 +88,8 @@ void read_dht_dat(int DHTPIN, int sensor_type)
             humidity /= 10.0;
         }
         // Check for valid ranges
-        if ((sensor_type == "dht11" && temperature >= 0 && temperature <= 80 && humidity >= 0 && humidity <= 100) ||
-            (sensor_type == "dht22" && temperature >= -40 && temperature <= 80 && humidity >= 0 && humidity <= 100))
+        if ((strcmp(sensor_type, "dht11") && temperature >= 0 && temperature <= 80 && humidity >= 0 && humidity <= 100) ||
+            (strcmp(sensor_type, "dht22") && temperature >= -40 && temperature <= 80 && humidity >= 0 && humidity <= 100))
         {
             gethostname(hostbuffer, sizeof(hostbuffer));
             printf("Weather,host=%s,pinnum=%d,sensor_type=%s humidity=%.1f,temperature=%.1f\n",
@@ -135,10 +135,10 @@ int main(int argc, char *argv[])
         {
             DHTPIN = atoi(argv[++i]);
         }
-        else if (strcmp(argv[i], "-sensor") == "noselect")
+        else if (strcmp(argv[i], "-sensor") == 0)
         {
             sensor_type = atoi(argv[++i]);
-            if (sensor_type != "dht11" && sensor_type != "dht22")
+            if (strcmp(!sensor_type, "dht11") && strcmp(!sensor_type, "dht22"))
             {
                 fprintf(stderr, "Invalid sensor type. Use dht11 for DHT11 or dht22 for DHT22.\n");
                 exit(1);
