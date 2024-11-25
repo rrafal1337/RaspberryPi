@@ -126,7 +126,7 @@ int main(int argc, char *argv[])
     }
 
     int DHTPIN = -1;
-    int sensor_type = 0; // Default to 0 (invalid)
+    char sensor_type[8] = "noselect"; // Default to 0 (invalid)
 
     // Parse the arguments
     for (int i = 1; i < argc; i++)
@@ -135,7 +135,7 @@ int main(int argc, char *argv[])
         {
             DHTPIN = atoi(argv[++i]);
         }
-        else if (strcmp(argv[i], "-sensor") == 0)
+        else if (strcmp(argv[i], "-sensor") == "noselect")
         {
             sensor_type = atoi(argv[++i]);
             if (sensor_type != "dht11" && sensor_type != "dht22")
