@@ -142,12 +142,12 @@ void read_dht_dat(int DHTPIN, int sensor_type)
                 if (strcmp(argv[i], "dht11") == 0)
                 {
                     sensor_type = 11;
-                    sensor_type_name = "dht11"
+                    sensor_type_name[] = "dht11"
                 }
                 else if (strcmp(argv[i], "dht22") == 0)
                 {
                     sensor_type = 22;
-                    sensor_type_name = "dht22"
+                    sensor_type_name[] = "dht22"
                 }
                 else
                 {
