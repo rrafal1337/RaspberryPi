@@ -1,3 +1,10 @@
+// Generated with help of ChatGPT to support BMP280 and AHT20 on I2C.
+// Corrected manually to 40 bits and work fine fot both DHT11 and DHT22.
+// Output is in line protocol format to use in influxdata telegraf.
+// https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/
+// Program for Raspberry Pi board.
+// Compiling: gcc aht20+bmp280.c -o aht20+bmp280 -l wiringPi
+
 #include <stdio.h>
 #include <wiringPi.h>
 #include <wiringPiI2C.h>

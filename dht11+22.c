@@ -1,8 +1,6 @@
 // DHT11 program was found on
 // https://www.circuitbasics.com/how-to-set-up-the-dht11-humidity-sensor-on-the-raspberry-pi/
 // Improved with help of ChatGPT to support DHT11 and DHT22 as well configurable data pin.
-// Surprisingly ChatGPT assumed 80 bits of data for DHT22 and that didn't work.
-// Corrected manually to 40 bits and work fine fot both DHT11 and DHT22.
 // Output is in line protocol format to use in influxdata telegraf.
 // https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/
 // Program for Raspberry Pi board.
