@@ -22,7 +22,7 @@ This project showcases a weather monitoring system using Raspberry Pi 2 with DHT
 ## System Requirements
 
 - **Hardware**:
-  - Raspberry Pi 2 or better
+  - Raspberry Pi with GPIO pins
   - DHT11 or DHT22 sensor
   - AHT20 or BMP280 sensor
 
@@ -78,11 +78,11 @@ Refer to the official documentation for setting up Telegraf and InfluxDB:
 ## Project Architecture
 
 ```mermaid
-graph TD;
-    Sensors-->C Programs (wiringPi);
-    C Programs (wiringPi)-->Telegraf;
-    Telegraf-->InfluxDB;
-    InfluxDB-->Grafana;
+flowchart TD;
+    A[Hardware sensors]-->B[C Programs (wiringPi)];
+    B-->C[Telegraf agent];
+    C-->D[InfluxDB time series database];
+    D-->E[Grafana dashboards];
 ```
 
 1. **Sensors**: DHT11/DHT22 and AHT20/BMP280 measure temperature, humidity, and pressure.
@@ -97,7 +97,7 @@ graph TD;
 
 Here is an example of the data output in InfluxDB's line protocol format:
 
-```
+```text
 Weather,host=stork,pinnum=15,sensor_type_name=dht22 humidity=72.9,temperature=10.0
 Weather,host=stork,pinnum=3,sensor_type_name=dht22 humidity=51.1,temperature=17.2
 Weather,host=stork,sensor_type_name=bmp280 pressure=1009,temperature=18.4
