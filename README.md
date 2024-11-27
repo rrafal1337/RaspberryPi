@@ -79,7 +79,7 @@ Refer to the official documentation for setting up Telegraf and InfluxDB:
 
 ```mermaid
 flowchart TD;
-    A[Hardware sensors]-->B[C Programs (wiringPi)];
+    A[Hardware sensors]-->B[C Programs **wiringPi**];
     B-->C[Telegraf agent];
     C-->D[InfluxDB time series database];
     D-->E[Grafana dashboards];
