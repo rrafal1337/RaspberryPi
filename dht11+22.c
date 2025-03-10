@@ -79,12 +79,11 @@ void read_dht_dat(int DHTPIN, int sensor_type)
         else if (sensor_type == 22)
         { // DHT22
             humidity = (dht_dat[0] << 8) + dht_dat[1];
-            temperature = (dht_dat[2] << 8) + dht_dat[3];
-            if (dht_dat[2] & 0x80) // Check if temperature is negative
-                temperature = -temperature;
-            // Handle the decimal part for DHT22 (1 decimal point)
-            temperature /= 10.0;
-            humidity /= 10.0;
+            int16_t raw_temperature = (dht_dat[2] << 8) | dht_dat[3]; // Correct way to combine bytes
+            if (raw_temperature & 0x8000)                             // If negative
+                raw_temperature = -((raw_temperature & 0x7FFF));      // Convert to proper negative value
+            temperature = raw_temperature / 10.0;                     // Convert to real temperature
+            humidity /= 10.0;                                         // Convert humidity
         }
 
         // Check for valid ranges
