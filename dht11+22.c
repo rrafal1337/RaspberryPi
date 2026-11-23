@@ -1,178 +1,308 @@
-// DHT11 program was found on
-// https://www.circuitbasics.com/how-to-set-up-the-dht11-humidity-sensor-on-the-raspberry-pi/
-// Improved with help of ChatGPT to support DHT11 and DHT22 as well configurable data pin.
-// Output is in line protocol format to use in influxdata telegraf.
-// https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/
-// Program for Raspberry Pi board.
-// Compiling: gcc dht11+22.c -o dht11+22 -l wiringPi
+#define _DEFAULT_SOURCE
+
+/*
+ * DHT11 / DHT22 reader for Raspberry Pi using WiringPi.
+ *
+ * Output: InfluxDB Line Protocol
+ * Build:  gcc dht11+22.c -o dht11+22 -lwiringPi
+ *
+ * Usage:
+ *   ./dht11+22 -dhtpin <wiringPi_pin> -sensor <dht11|dht22>
+ *
+ */
 
 #include <wiringPi.h>
+
+#include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
-#include <unistd.h>
 #include <string.h>
+#include <unistd.h>
 
-#define MAXTIMINGS 85
+#define MAX_ATTEMPTS 7
+#define RETRY_DELAY_MS 2000
 
-int dht_dat[5] = {0, 0, 0, 0, 0}; // Data array to hold received values
-char hostbuffer[256];
-char sensor_type_name[8] = "unknown"; // Initialize to a default value
-int maxRetries = 7;
-int retries = 0;
+/*
+ * DHT timings are nominally:
+ *   response: LOW ~80 us, HIGH ~80 us
+ *   data bit: LOW ~50 us, then HIGH ~26-28 us (0) or ~70 us (1)
+ *
+ * Linux is not a real-time operating system, so the limits deliberately
+ * allow some scheduling/polling jitter. micros() is a 32-bit counter;
+ * unsigned subtraction also handles its wraparound.
+ */
+#define RESPONSE_TIMEOUT_US 150U
+#define DATA_TIMEOUT_US 150U
+#define RESPONSE_MIN_US 40U
+#define RESPONSE_MAX_US 120U
+#define BIT_LOW_MIN_US 15U
+#define BIT_LOW_MAX_US 100U
+#define BIT_HIGH_MIN_US 10U
+#define BIT_HIGH_MAX_US 120U
+#define BIT_THRESHOLD_US is_not_used
 
-// Function to read from the sensor (DHT11 or DHT22)
-void read_dht_dat(int DHTPIN, int sensor_type)
+static const char *sensor_type_name(int sensor_type)
 {
-    uint8_t laststate = HIGH;
-    uint8_t counter = 0;
-    uint8_t j = 0, i;
-    dht_dat[0] = dht_dat[1] = dht_dat[2] = dht_dat[3] = dht_dat[4] = 0;
+    return sensor_type == 11 ? "dht11" : "dht22";
+}
 
-    // Starting transmission
-    pinMode(DHTPIN, OUTPUT);
-    digitalWrite(DHTPIN, LOW);
-    delay(18);
-    digitalWrite(DHTPIN, HIGH);
-    delayMicroseconds(40);
-    pinMode(DHTPIN, INPUT);
+/*
+ * Wait until the pin reaches 'level'.
+ * On success, optionally return the elapsed time in microseconds.
+ * Returns 0 on success and -1 on timeout.
+ */
+static int wait_for_level(int pin, int level, uint32_t timeout_us,
+                          uint32_t *elapsed_us)
+{
+    uint32_t start = micros();
 
-    // Reading incoming data
-    for (i = 0; i < MAXTIMINGS; i++)
+    while (digitalRead(pin) != level)
     {
-        counter = 0;
-        while (digitalRead(DHTPIN) == laststate)
-        {
-            counter++;
-            delayMicroseconds(1);
-            if (counter == 255)
-            {
-                break;
-            }
-        }
-        laststate = digitalRead(DHTPIN);
-
-        if (counter == 255)
-            break;
-
-        if ((i >= 4) && (i % 2 == 0))
-        {
-            dht_dat[j / 8] <<= 1;
-            if (counter > 16)
-                dht_dat[j / 8] |= 1;
-            j++;
-        }
+        if ((uint32_t)(micros() - start) >= timeout_us)
+            return -1;
     }
 
-    if ((j >= 40) && // required 40 bits for both types and checking checksum
-        (dht_dat[4] == ((dht_dat[0] + dht_dat[1] + dht_dat[2] + dht_dat[3]) & 0xFF)))
+    if (elapsed_us != NULL)
+        *elapsed_us = (uint32_t)(micros() - start);
+
+    return 0;
+}
+
+/* Read one complete 40-bit frame into data[]. */
+static int read_dht_frame(int pin, uint8_t data[5])
+{
+    uint32_t duration;
+    unsigned int bit;
+
+    memset(data, 0, 5);
+
+    /* Send the host start signal. */
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
+    delay(18);
+    digitalWrite(pin, HIGH);
+    delayMicroseconds(30);
+
+    /* Release the bus and wait for the sensor's response. */
+    pinMode(pin, INPUT);
+
+    if (wait_for_level(pin, LOW, RESPONSE_TIMEOUT_US, NULL) != 0)
+        return -1;
+
+    if (wait_for_level(pin, HIGH, RESPONSE_TIMEOUT_US, &duration) != 0)
+        return -1;
+    if (duration < RESPONSE_MIN_US || duration > RESPONSE_MAX_US)
+        return -1;
+
+    if (wait_for_level(pin, LOW, RESPONSE_TIMEOUT_US, &duration) != 0)
+        return -1;
+    if (duration < RESPONSE_MIN_US || duration > RESPONSE_MAX_US)
+        return -1;
+
+    /* The response HIGH has ended; the data stream starts LOW. */
+    for (bit = 0; bit < 40; ++bit)
     {
+        /* Measure the LOW part of this data bit. */
+        if (wait_for_level(pin, HIGH, DATA_TIMEOUT_US, &duration) != 0)
+            return -1;
+        if (duration < BIT_LOW_MIN_US || duration > BIT_LOW_MAX_US)
+            return -1;
 
-        // Handle DHT11 (8-bit) or DHT22 (16-bit)
-        float temperature, humidity;
+        /* Measure the HIGH part; its duration encodes the bit value. */
+        if (wait_for_level(pin, LOW, DATA_TIMEOUT_US, &duration) != 0)
+            return -1;
+        if (duration < BIT_HIGH_MIN_US || duration > BIT_HIGH_MAX_US)
+            return -1;
 
-        if (sensor_type == 11)
-        { // DHT11
-            humidity = dht_dat[0];
-            temperature = dht_dat[2];
-        }
-        else if (sensor_type == 22)
-        { // DHT22
-            humidity = (dht_dat[0] << 8) + dht_dat[1];
-            int16_t raw_temperature = (dht_dat[2] << 8) | dht_dat[3]; // Correct way to combine bytes
-            if (raw_temperature & 0x8000)                             // If negative
-                raw_temperature = -((raw_temperature & 0x7FFF));      // Convert to proper negative value
-            temperature = raw_temperature / 10.0;                     // Convert to real temperature
-            humidity /= 10.0;                                         // Convert humidity
-        }
+        data[bit / 8] <<= 1;
+        if (duration > 40U)
+            data[bit / 8] |= 1U;
+    }
 
-        // Check for valid ranges
-        if ((sensor_type == 11 && temperature >= 0 && temperature <= 80 && humidity >= 0 && humidity <= 100) ||
-            (sensor_type == 22 && temperature >= -40 && temperature <= 80 && humidity >= 0 && humidity <= 100))
+    return 0;
+}
+
+static int decode_reading(const uint8_t data[5], int sensor_type,
+                          float *temperature, float *humidity)
+{
+    uint8_t checksum =
+        (uint8_t)(data[0] + data[1] + data[2] + data[3]);
+
+    if (checksum != data[4])
+        return -1;
+
+    if (sensor_type == 11)
+    {
+        /*
+         * DHT11: integer and decimal bytes for humidity and temperature.
+         * The sign bit convention is supported by some DHT11 variants.
+         */
+        *humidity = (float)data[0] + (float)data[1] / 10.0f;
+
+        if ((data[2] & 0x80U) != 0U)
+            *temperature = -((float)(data[2] & 0x7FU) +
+                             (float)data[3] / 10.0f);
+        else
+            *temperature = (float)data[2] + (float)data[3] / 10.0f;
+
+        if (*temperature < 0.0f || *temperature > 80.0f ||
+            *humidity < 0.0f || *humidity > 100.0f)
+            return -1;
+    }
+    else if (sensor_type == 22)
+    {
+        uint16_t raw_humidity =
+            (uint16_t)(((uint16_t)data[0] << 8) | data[1]);
+        uint16_t raw_temperature =
+            (uint16_t)(((uint16_t)data[2] << 8) | data[3]);
+
+        *humidity = (float)raw_humidity / 10.0f;
+
+        if ((raw_temperature & 0x8000U) != 0U)
         {
-            gethostname(hostbuffer, sizeof(hostbuffer));
-            printf("Weather,host=%s,pinnum=%d,sensor_type_name=%s humidity=%.1f,temperature=%.1f\n",
-                   hostbuffer, DHTPIN, sensor_type_name, humidity, temperature);
+            raw_temperature &= 0x7FFFU;
+            *temperature = -(float)raw_temperature / 10.0f;
         }
         else
         {
-            // Retry if values are out of range
-            if (retries < maxRetries)
-            {
-                retries++;
-                delay(3000);
-                read_dht_dat(DHTPIN, sensor_type);
-            }
+            *temperature = (float)raw_temperature / 10.0f;
         }
+
+        if (*temperature < -40.0f || *temperature > 80.0f ||
+            *humidity < 0.0f || *humidity > 100.0f)
+            return -1;
     }
     else
     {
-        // Retry if checksum fails or data is incorrect
-        if (retries < maxRetries)
-        {
-            retries++;
-            delay(3000);
-            read_dht_dat(DHTPIN, sensor_type); // Retry if the data is incorrect
-        }
+        return -1;
     }
+
+    return 0;
+}
+
+static int read_dht(int pin, int sensor_type,
+                    float *temperature, float *humidity)
+{
+    uint8_t data[5];
+    int attempt;
+
+    for (attempt = 1; attempt <= MAX_ATTEMPTS; ++attempt)
+    {
+        if (read_dht_frame(pin, data) == 0 &&
+            decode_reading(data, sensor_type, temperature, humidity) == 0)
+        {
+            return 0;
+        }
+
+        if (attempt < MAX_ATTEMPTS)
+            delay(RETRY_DELAY_MS);
+    }
+
+    return -1;
+}
+
+static int parse_pin(const char *text, int *pin)
+{
+    char *end = NULL;
+    long value;
+
+    errno = 0;
+    value = strtol(text, &end, 10);
+
+    if (errno != 0 || end == text || *end != '\0' ||
+        value < 0 || value > 31)
+        return -1;
+
+    *pin = (int)value;
+    return 0;
 }
 
 int main(int argc, char *argv[])
 {
+    int pin = -1;
+    int sensor_type = 0;
+    char hostname[256];
+    float temperature;
+    float humidity;
+    int i;
+
     if (argc != 5)
     {
-        fprintf(stderr, "Usage: %s -dhtpin <pin_number> -sensor <dht11|dht22>\n", argv[0]);
-        exit(1);
+        fprintf(stderr,
+                "Usage: %s -dhtpin <pin_number> -sensor <dht11|dht22>\n",
+                argv[0]);
+        return EXIT_FAILURE;
     }
 
-    int DHTPIN = -1;
-    int sensor_type = 0; // Default to 0 (invalid)
-
-    // Parse the arguments
-    for (int i = 1; i < argc; i++)
+    for (i = 1; i < argc; ++i)
     {
         if (strcmp(argv[i], "-dhtpin") == 0)
         {
-            DHTPIN = atoi(argv[++i]);
+            if (i + 1 >= argc || parse_pin(argv[++i], &pin) != 0)
+            {
+                fprintf(stderr, "Invalid WiringPi pin number (expected 0-31).\n");
+                return EXIT_FAILURE;
+            }
         }
         else if (strcmp(argv[i], "-sensor") == 0)
         {
-            i++;
+            if (i + 1 >= argc)
+            {
+                fprintf(stderr, "Missing sensor type.\n");
+                return EXIT_FAILURE;
+            }
+
+            ++i;
             if (strcmp(argv[i], "dht11") == 0)
-            {
                 sensor_type = 11;
-                strcpy(sensor_type_name, "dht11");
-            }
             else if (strcmp(argv[i], "dht22") == 0)
-            {
                 sensor_type = 22;
-                strcpy(sensor_type_name, "dht22");
-            }
             else
             {
                 fprintf(stderr, "Invalid sensor type. Use dht11 or dht22.\n");
-                exit(1);
+                return EXIT_FAILURE;
             }
         }
         else
         {
             fprintf(stderr, "Invalid argument: %s\n", argv[i]);
-            exit(1);
+            return EXIT_FAILURE;
         }
     }
 
-    if (DHTPIN == -1 || sensor_type == 0)
+    if (pin < 0 || sensor_type == 0)
     {
-        fprintf(stderr, "Usage: %s -dhtpin <pin_number> -sensor <dht11|dht22>\n", argv[0]);
-        exit(1);
+        fprintf(stderr,
+                "Usage: %s -dhtpin <pin_number> -sensor <dht11|dht22>\n",
+                argv[0]);
+        return EXIT_FAILURE;
     }
 
     if (wiringPiSetup() == -1)
     {
-        exit(1);
+        fprintf(stderr, "wiringPiSetup() failed.\n");
+        return EXIT_FAILURE;
     }
 
-    read_dht_dat(DHTPIN, sensor_type);
+    if (read_dht(pin, sensor_type, &temperature, &humidity) != 0)
+    {
+        fprintf(stderr, "Failed to read %s on WiringPi pin %d after %d attempts.\n",
+                sensor_type_name(sensor_type), pin, MAX_ATTEMPTS);
+        return EXIT_FAILURE;
+    }
 
-    return 0;
+    if (gethostname(hostname, sizeof(hostname)) != 0)
+    {
+        perror("gethostname");
+        return EXIT_FAILURE;
+    }
+    hostname[sizeof(hostname) - 1] = '\0';
+
+    printf("Weather,host=%s,pinnum=%d,sensor_type_name=%s "
+           "humidity=%.1f,temperature=%.1f\n",
+           hostname, pin, sensor_type_name(sensor_type),
+           humidity, temperature);
+
+    return EXIT_SUCCESS;
 }
